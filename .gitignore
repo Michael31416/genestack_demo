@@ -90,6 +90,8 @@ dmypy.json
 *.db
 *.sqlite
 *.sqlite3
+# But keep the main database directory structure
+!database/.gitkeep
 
 # Log files
 *.log
