@@ -227,3 +227,13 @@ MIT License - See LICENSE file for details
 - Europe PMC for literature access
 - GWAS Catalog for genetic associations
 - Ensembl and EBI for biological data services
+
+## GPT-5 Model Support
+
+This application now supports the latest GPT-5 model family:
+- gpt-5-mini (default, optimized for speed and cost)
+- gpt-5 (full capability model)  
+- gpt-5-nano (ultra-fast model)
+
+All models have been tested and verified to work with the gene-disease analysis pipeline.
+
