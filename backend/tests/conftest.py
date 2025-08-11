@@ -18,52 +18,89 @@ from app.main import app
 # Removed deprecated event_loop fixture - using pytest-asyncio default
 
 
-@pytest.fixture
-def test_db():
-    """Create a test database using in-memory SQLite."""
-    # Use in-memory SQLite for tests
-    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
-    Base.metadata.create_all(bind=engine)
+
+
+@pytest.fixture(scope="function")
+def test_engine():
+    """Create a test database engine with complete isolation."""
+    import tempfile
+    import os
     
-    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    # Create a temporary database file in system temp directory
+    # This ensures it's completely isolated from the project
+    db_fd, db_path = tempfile.mkstemp(suffix='_test.db', prefix='gene_disease_')
+    os.close(db_fd)
     
-    yield SessionLocal
+    try:
+        # Create engine with the temporary file
+        # Use stricter settings for testing
+        engine = create_engine(
+            f"sqlite:///{db_path}", 
+            connect_args={
+                "check_same_thread": False,
+                "timeout": 5.0  # Shorter timeout for tests
+            },
+            echo=False  # Set to True for debugging
+        )
+        
+        # Create all tables
+        Base.metadata.create_all(bind=engine)
+        
+        yield engine
     
-    # Cleanup
-    Base.metadata.drop_all(bind=engine)
+    finally:
+        # Ensure complete cleanup
+        engine.dispose()
+        # Force close all connections
+        engine.pool.dispose()
+        try:
+            os.unlink(db_path)
+        except (OSError, PermissionError) as e:
+            # Log but don't fail if cleanup has issues
+            print(f"Warning: Could not delete test database {db_path}: {e}")
 
 
 @pytest.fixture
-def db_session(test_db):
-    """Create a database session for a test."""
-    session = test_db()
+def test_session_factory(test_engine):
+    """Create a session factory for the test database."""
+    return sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
+
+
+@pytest.fixture
+def db_session(test_session_factory):
+    """Create a database session for integration tests with automatic rollback."""
+    session = test_session_factory()
+    # Begin a transaction that will be rolled back
+    session.begin()
     try:
         yield session
     finally:
+        # Rollback any changes made during the test
+        session.rollback()
         session.close()
 
 
 @pytest.fixture
-def client(test_db):
-    """Create a test client with test database."""
+def client(test_session_factory):
+    """Create a test client that uses the same database as db_session fixture."""
     def override_get_db():
-        session = test_db()
+        db = test_session_factory()
         try:
-            yield session
+            yield db
         finally:
-            session.close()
+            db.close()
     
-    app.dependency_overrides[get_db_engine] = lambda: create_engine("sqlite:///:memory:")
-    
-    # Override the database dependency
+    # Import app and override the dependency
     from app.main import get_db
     app.dependency_overrides[get_db] = override_get_db
     
-    with TestClient(app) as test_client:
-        yield test_client
-    
-    # Clean up overrides
-    app.dependency_overrides.clear()
+    try:
+        # Create test client
+        with TestClient(app) as test_client:
+            yield test_client
+    finally:
+        # Clean up
+        app.dependency_overrides.clear()
 
 
 @pytest.fixture
