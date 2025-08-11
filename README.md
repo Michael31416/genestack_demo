@@ -142,6 +142,44 @@ uvicorn app.main:app --reload
 
 4. Access at http://localhost:8000
 
+### Running Tests
+
+The application includes a comprehensive test suite with unit and integration tests:
+
+```bash
+cd backend
+
+# Install test dependencies (if not already installed)
+pip install -r requirements.txt
+
+# Run all tests
+pytest
+
+# Run with coverage report
+pytest --cov=app --cov-report=html
+
+# Run only unit tests
+pytest tests/unit/
+
+# Run only integration tests  
+pytest tests/integration/
+
+# Run with verbose output
+pytest -v
+
+# Run specific test file
+pytest tests/unit/test_llm_service.py
+```
+
+**Test Coverage:**
+- **Unit Tests**: 102 tests covering all service modules with mocked external APIs
+  - `test_data_fetcher.py`: Tests for all external API integrations (Ensembl, OLS, OpenTargets, Europe PMC, GWAS)
+  - `test_llm_service.py`: Tests for OpenAI and Anthropic LLM integrations with response format handling
+  - `test_analysis_service.py`: Tests for the analysis orchestration layer
+- **Integration Tests**: 26 tests covering FastAPI endpoints with test database
+  - Authentication, analysis creation, result retrieval, WebSocket connections
+- **Mock Strategy**: All external APIs are mocked to ensure fast, reliable tests without dependencies
+
 ### Project Structure
 
 ```
@@ -160,7 +198,12 @@ genestack_test/
 │   │   ├── index.html
 │   │   ├── style.css
 │   │   └── app.js
+│   ├── tests/                # Test suite
+│   │   ├── unit/             # Unit tests with mocked dependencies
+│   │   ├── integration/      # Integration tests with test database
+│   │   └── conftest.py       # Test fixtures and configuration
 │   ├── requirements.txt
+│   ├── pytest.ini           # Pytest configuration
 │   └── Dockerfile
 ├── database/                 # SQLite database (created at runtime)
 ├── docker-compose.yml
@@ -186,13 +229,13 @@ The SQLite database is automatically created in the `database/` directory on fir
 2. **Scalability**: SQLite limits concurrent writes (consider PostgreSQL for high load)
 3. **Rate Limiting**: Basic implementation, could be enhanced with Redis
 4. **Error Recovery**: Limited retry logic for external API failures
-5. **Testing**: No test suite included (would add pytest in production)
+5. **Testing**: Comprehensive test suite included with mocked external dependencies
 6. **Monitoring**: No logging or metrics (would add in production)
 
 ## Future Enhancements
 
 - Add API key encryption
-- Implement comprehensive test suite
+- Improve test coverage and add end-to-end tests
 - Add export functionality (PDF, CSV)
 - Enhanced caching for external API responses
 - User authentication and authorization
