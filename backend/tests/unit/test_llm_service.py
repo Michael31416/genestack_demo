@@ -7,6 +7,8 @@ import pytest
 from unittest.mock import AsyncMock, patch, MagicMock
 import json
 import httpx
+import asyncio
+import os
 
 from app.services.llm_service import LLMService
 

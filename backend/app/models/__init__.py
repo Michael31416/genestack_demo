@@ -64,6 +64,9 @@ class Result(Base):
 
 
 def get_db_engine(db_path: str = "database/gene_disease.db"):
+    import os
+    # Create directory if it doesn't exist
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
     engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
     Base.metadata.create_all(bind=engine)
     return engine
