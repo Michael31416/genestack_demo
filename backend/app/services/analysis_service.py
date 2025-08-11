@@ -18,7 +18,13 @@ from .data_fetcher import (
     get_literature_evidence,
     get_gwas_associations
 )
-from .llm_service import LLMService
+from .llm_service import (
+    LLMService, 
+    LLMRateLimitError, 
+    LLMQuotaExceededError,
+    LLMAuthenticationError,
+    LLMServiceUnavailableError
+)
 
 
 class AnalysisService:
@@ -67,8 +73,24 @@ class AnalysisService:
                     result.verdict = llm_output.get("verdict", "inconclusive")
                     result.confidence = float(llm_output.get("confidence", 0.0))
                     
+                except LLMAuthenticationError as e:
+                    result.error_message = f"API Authentication Error: {str(e)}"
+                    result.verdict = "error"
+                    result.confidence = 0.0
+                except LLMQuotaExceededError as e:
+                    result.error_message = f"API Quota Exceeded: {str(e)}"
+                    result.verdict = "error"  
+                    result.confidence = 0.0
+                except LLMRateLimitError as e:
+                    result.error_message = f"API Rate Limited: {str(e)}"
+                    result.verdict = "retry_later"
+                    result.confidence = 0.0
+                except LLMServiceUnavailableError as e:
+                    result.error_message = f"LLM Service Unavailable: {str(e)}"
+                    result.verdict = "service_unavailable"
+                    result.confidence = 0.0
                 except Exception as e:
-                    result.error_message = str(e)
+                    result.error_message = f"Analysis Error: {str(e)}"
                     result.verdict = "error"
                     result.confidence = 0.0
             

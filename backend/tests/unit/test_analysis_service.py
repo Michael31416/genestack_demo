@@ -181,7 +181,7 @@ class TestAnalysisService:
         # Verify error was handled
         result = db_session.query(Result).filter(Result.analysis_id == 1).first()
         assert result is not None
-        assert result.error_message == "LLM API Error"
+        assert "LLM API Error" in result.error_message
         assert result.verdict == "error"
         assert result.confidence == 0.0
     

@@ -4,9 +4,64 @@ LLM service supporting both OpenAI and Anthropic APIs.
 
 import os
 import json
+import asyncio
+import time
 from typing import Dict, Any, Optional
 import httpx
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
+
+
+class LLMRateLimitError(Exception):
+    """Raised when LLM API rate limit is exceeded."""
+    def __init__(self, message: str, retry_after: Optional[int] = None):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+class LLMQuotaExceededError(Exception):
+    """Raised when LLM API quota is exceeded."""
+    pass
+
+
+class LLMAuthenticationError(Exception):
+    """Raised when LLM API authentication fails."""
+    pass
+
+
+class LLMServiceUnavailableError(Exception):
+    """Raised when LLM service is temporarily unavailable."""
+    pass
+
+
+# Rate limiting tracking (in-memory for simplicity)
+_rate_limit_tracker = {}
+
+
+def _check_rate_limit(provider: str, requests_per_minute: int = 20) -> None:
+    """Check if we're within rate limits for the provider."""
+    now = time.time()
+    window_start = now - 60  # 1 minute window
+    
+    if provider not in _rate_limit_tracker:
+        _rate_limit_tracker[provider] = []
+    
+    # Remove old requests outside the window
+    _rate_limit_tracker[provider] = [
+        req_time for req_time in _rate_limit_tracker[provider] 
+        if req_time > window_start
+    ]
+    
+    # Check if we're at the limit
+    if len(_rate_limit_tracker[provider]) >= requests_per_minute:
+        oldest_request = min(_rate_limit_tracker[provider])
+        wait_time = int(61 - (now - oldest_request))  # Wait until window clears + 1 sec
+        raise LLMRateLimitError(
+            f"Rate limit exceeded for {provider}. Try again in {wait_time} seconds.",
+            retry_after=wait_time
+        )
+    
+    # Record this request
+    _rate_limit_tracker[provider].append(now)
 
 
 LLM_SYSTEM_PROMPT = """You are a biomedical evidence-synthesis assistant. Assess whether the GENE is causally or mechanistically associated with the DISEASE.
@@ -42,12 +97,28 @@ class LLMService:
         self.provider = provider.lower()
         self.api_key = api_key
         
-    @retry(wait=wait_exponential(multiplier=1, min=2, max=10), stop=stop_after_attempt(3))
+    @retry(
+        wait=wait_exponential(multiplier=1, min=2, max=30),
+        stop=stop_after_attempt(3),
+        retry=retry_if_exception_type((
+            httpx.TimeoutException, 
+            httpx.ConnectError,
+            LLMServiceUnavailableError
+        ))
+    )
     async def analyze_correlation(
         self, 
         evidence_json: Dict[str, Any], 
         model: Optional[str] = None
     ) -> Dict[str, Any]:
+        # Check our internal rate limits first
+        try:
+            _check_rate_limit(f"{self.provider}_internal", requests_per_minute=20)
+        except LLMRateLimitError as e:
+            # For internal rate limits, wait and then raise without retry
+            await asyncio.sleep(min(e.retry_after or 60, 60))
+            raise
+            
         if self.provider == "openai":
             return await self._call_openai(evidence_json, model or "gpt-4o-mini")
         elif self.provider == "anthropic":
@@ -93,18 +164,44 @@ class LLMService:
                 resp.raise_for_status()
             except httpx.HTTPStatusError as e:
                 txt = e.response.text or ""
-                # Retry without response_format for older models
-                if e.response.status_code == 400 and "response_format" in txt.lower():
-                    resp = await client.post(
-                        f"{base_url}/chat/completions",
-                        headers=headers,
-                        json=payload
-                    )
-                    resp.raise_for_status()
+                status_code = e.response.status_code
+                
+                # Handle specific error types with appropriate exceptions
+                if status_code == 401:
+                    raise LLMAuthenticationError(f"Invalid OpenAI API key: {txt}") from e
+                elif status_code == 429:
+                    # Parse rate limit info from headers
+                    retry_after = None
+                    if 'retry-after' in e.response.headers:
+                        retry_after = int(e.response.headers['retry-after'])
+                    elif 'x-ratelimit-reset-requests' in e.response.headers:
+                        retry_after = int(e.response.headers['x-ratelimit-reset-requests'])
+                    
+                    if "quota" in txt.lower() or "billing" in txt.lower():
+                        raise LLMQuotaExceededError(f"OpenAI quota exceeded: {txt}") from e
+                    else:
+                        raise LLMRateLimitError(f"OpenAI rate limit exceeded: {txt}", retry_after) from e
+                elif status_code >= 500:
+                    raise LLMServiceUnavailableError(f"OpenAI service unavailable: {txt}") from e
+                elif status_code == 400 and "response_format" in txt.lower():
+                    # Retry without response_format for older models
+                    try:
+                        resp = await client.post(
+                            f"{base_url}/chat/completions",
+                            headers=headers,
+                            json=payload
+                        )
+                        resp.raise_for_status()
+                    except httpx.HTTPStatusError as e2:
+                        self._handle_http_error("OpenAI", e2)
                 else:
                     raise RuntimeError(
-                        f"OpenAI API error {e.response.status_code}: {txt}"
+                        f"OpenAI API error {status_code}: {txt}"
                     ) from e
+            except httpx.TimeoutException as e:
+                raise LLMServiceUnavailableError("OpenAI API timeout") from e
+            except httpx.ConnectError as e:
+                raise LLMServiceUnavailableError("Unable to connect to OpenAI API") from e
             
             data = resp.json()
             content = data["choices"][0]["message"]["content"]
@@ -152,16 +249,19 @@ class LLMService:
         }
         
         async with httpx.AsyncClient(timeout=90) as client:
-            resp = await client.post(
-                f"{base_url}/messages",
-                headers=headers,
-                json=payload
-            )
-            
-            if resp.status_code != 200:
-                raise RuntimeError(
-                    f"Anthropic API error {resp.status_code}: {resp.text}"
+            try:
+                resp = await client.post(
+                    f"{base_url}/messages",
+                    headers=headers,
+                    json=payload
                 )
+                
+                if resp.status_code != 200:
+                    self._handle_anthropic_error(resp)
+            except httpx.TimeoutException as e:
+                raise LLMServiceUnavailableError("Anthropic API timeout") from e
+            except httpx.ConnectError as e:
+                raise LLMServiceUnavailableError("Unable to connect to Anthropic API") from e
             
             data = resp.json()
             content = data["content"][0]["text"]
@@ -186,3 +286,44 @@ class LLMService:
                     "recommended_next_steps": [],
                     "_raw": content
                 }
+    def _handle_http_error(self, provider: str, error: httpx.HTTPStatusError) -> None:
+        """Handle HTTP errors for LLM APIs."""
+        txt = error.response.text or ""
+        status_code = error.response.status_code
+        
+        if status_code == 401:
+            raise LLMAuthenticationError(f"Invalid {provider} API key: {txt}") from error
+        elif status_code == 429:
+            retry_after = None
+            if 'retry-after' in error.response.headers:
+                retry_after = int(error.response.headers['retry-after'])
+                
+            if "quota" in txt.lower() or "billing" in txt.lower():
+                raise LLMQuotaExceededError(f"{provider} quota exceeded: {txt}") from error
+            else:
+                raise LLMRateLimitError(f"{provider} rate limit exceeded: {txt}", retry_after) from error
+        elif status_code >= 500:
+            raise LLMServiceUnavailableError(f"{provider} service unavailable: {txt}") from error
+        else:
+            raise RuntimeError(f"{provider} API error {status_code}: {txt}") from error
+    
+    def _handle_anthropic_error(self, response: httpx.Response) -> None:
+        """Handle Anthropic API error responses."""
+        txt = response.text or ""
+        status_code = response.status_code
+        
+        if status_code == 401:
+            raise LLMAuthenticationError(f"Invalid Anthropic API key: {txt}")
+        elif status_code == 429:
+            retry_after = None
+            if 'retry-after' in response.headers:
+                retry_after = int(response.headers['retry-after'])
+            
+            if "quota" in txt.lower() or "billing" in txt.lower():
+                raise LLMQuotaExceededError(f"Anthropic quota exceeded: {txt}")
+            else:
+                raise LLMRateLimitError(f"Anthropic rate limit exceeded: {txt}", retry_after)
+        elif status_code >= 500:
+            raise LLMServiceUnavailableError(f"Anthropic service unavailable: {txt}")
+        else:
+            raise RuntimeError(f"Anthropic API error {status_code}: {txt}")

@@ -167,13 +167,13 @@ class TestLLMService:
             with pytest.raises(Exception) as exc_info:
                 await service.analyze_correlation(evidence)
             
-            # Check that the underlying error was about Anthropic API
+            # Check that the underlying error was about Anthropic service unavailable (500 error)
             retry_error = exc_info.value
             if hasattr(retry_error, 'last_attempt'):
                 original_error = retry_error.last_attempt.exception()
-                assert "Anthropic API error 500" in str(original_error)
+                assert "service unavailable" in str(original_error).lower()
             else:
-                assert "API error 500" in str(retry_error)
+                assert "service unavailable" in str(retry_error).lower()
     
     @pytest.mark.asyncio
     async def test_anthropic_analysis_json_extraction(self):
