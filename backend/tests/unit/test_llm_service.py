@@ -28,21 +28,28 @@ class TestLLMService:
         assert service.provider == "anthropic"
         assert service.api_key == "ant-test-key"
     
-    def test_llm_service_init_invalid_provider(self):
+    @pytest.mark.asyncio
+    async def test_llm_service_init_invalid_provider(self):
         """Test LLMService with invalid provider."""
         service = LLMService("invalid", "test-key")
         
-        with pytest.raises(ValueError, match="Unsupported provider"):
-            asyncio.run(service.analyze_correlation({}))
+        with pytest.raises((ValueError, Exception)) as exc_info:
+            await service.analyze_correlation({})
+        
+        # Check that the original error is ValueError about unsupported provider
+        if hasattr(exc_info.value, 'last_attempt'):
+            assert "Unsupported provider" in str(exc_info.value.last_attempt.exception())
+        else:
+            assert "Unsupported provider" in str(exc_info.value)
     
     @pytest.mark.asyncio
     async def test_openai_analysis_success(self, sample_openai_response):
         """Test successful OpenAI analysis."""
         service = LLMService("openai", "sk-test-key")
         
-        mock_response = AsyncMock()
+        mock_response = MagicMock()
         mock_response.json.return_value = sample_openai_response
-        mock_response.raise_for_status = AsyncMock()
+        mock_response.raise_for_status = MagicMock()
         
         evidence = {
             "query": {"gene": {"symbol": "TP53"}, "disease": {"label": "lung cancer"}},
@@ -67,13 +74,13 @@ class TestLLMService:
         service = LLMService("openai", "sk-test-key")
         
         # Mock the first call to fail with response_format error, second to succeed
-        mock_response_error = AsyncMock()
+        mock_response_error = MagicMock()
         mock_response_error.status_code = 400
         mock_response_error.text = "response_format not supported"
         
-        mock_response_success = AsyncMock()
+        mock_response_success = MagicMock()
         mock_response_success.json.return_value = sample_openai_response
-        mock_response_success.raise_for_status = AsyncMock()
+        mock_response_success.raise_for_status = MagicMock()
         
         error = httpx.HTTPStatusError("Bad Request", request=None, response=mock_response_error)
         
@@ -94,13 +101,13 @@ class TestLLMService:
         """Test OpenAI analysis with JSON parsing error."""
         service = LLMService("openai", "sk-test-key")
         
-        mock_response = AsyncMock()
+        mock_response = MagicMock()
         # Return invalid JSON
         invalid_response = {
             "choices": [{"message": {"content": "This is not valid JSON"}}]
         }
         mock_response.json.return_value = invalid_response
-        mock_response.raise_for_status = AsyncMock()
+        mock_response.raise_for_status = MagicMock()
         
         evidence = {"query": {"gene": {"symbol": "TP53"}}}
         
@@ -121,7 +128,7 @@ class TestLLMService:
         """Test successful Anthropic analysis."""
         service = LLMService("anthropic", "ant-test-key")
         
-        mock_response = AsyncMock()
+        mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = sample_anthropic_response
         
@@ -146,7 +153,7 @@ class TestLLMService:
         """Test Anthropic analysis with API error."""
         service = LLMService("anthropic", "ant-test-key")
         
-        mock_response = AsyncMock()
+        mock_response = MagicMock()
         mock_response.status_code = 500
         mock_response.text = "Internal Server Error"
         
@@ -157,8 +164,16 @@ class TestLLMService:
             mock_client_class.return_value.__aenter__.return_value = mock_client
             mock_client.post.return_value = mock_response
             
-            with pytest.raises(RuntimeError, match="Anthropic API error 500"):
+            with pytest.raises(Exception) as exc_info:
                 await service.analyze_correlation(evidence)
+            
+            # Check that the underlying error was about Anthropic API
+            retry_error = exc_info.value
+            if hasattr(retry_error, 'last_attempt'):
+                original_error = retry_error.last_attempt.exception()
+                assert "Anthropic API error 500" in str(original_error)
+            else:
+                assert "API error 500" in str(retry_error)
     
     @pytest.mark.asyncio
     async def test_anthropic_analysis_json_extraction(self):
@@ -174,7 +189,7 @@ class TestLLMService:
             ]
         }
         
-        mock_response = AsyncMock()
+        mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = mixed_response
         
@@ -199,7 +214,7 @@ class TestLLMService:
             "content": [{"text": "This response has no valid JSON"}]
         }
         
-        mock_response = AsyncMock()
+        mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = invalid_response
         
@@ -222,14 +237,14 @@ class TestLLMService:
         service = LLMService("openai", "sk-test-key")
         
         # First call fails, subsequent calls succeed
-        error_response = AsyncMock()
+        error_response = MagicMock()
         error_response.status_code = 500
         
-        success_response = AsyncMock()
+        success_response = MagicMock()
         success_response.json.return_value = {
             "choices": [{"message": {"content": '{"verdict": "strong", "confidence": 0.8}'}}]
         }
-        success_response.raise_for_status = AsyncMock()
+        success_response.raise_for_status = MagicMock()
         
         evidence = {"query": {"gene": {"symbol": "TP53"}}}
         
@@ -258,9 +273,9 @@ class TestLLMService:
             with patch('httpx.AsyncClient') as mock_client_class:
                 mock_client = AsyncMock()
                 mock_client_class.return_value.__aenter__.return_value = mock_client
-                mock_response = AsyncMock()
+                mock_response = MagicMock()
                 mock_response.json.return_value = {"choices": [{"message": {"content": "{}"}}]}
-                mock_response.raise_for_status = AsyncMock()
+                mock_response.raise_for_status = MagicMock()
                 mock_client.post.return_value = mock_response
                 
                 await service.analyze_correlation({})
@@ -279,7 +294,7 @@ class TestLLMService:
             with patch('httpx.AsyncClient') as mock_client_class:
                 mock_client = AsyncMock()
                 mock_client_class.return_value.__aenter__.return_value = mock_client
-                mock_response = AsyncMock()
+                mock_response = MagicMock()
                 mock_response.status_code = 200
                 mock_response.json.return_value = {"content": [{"text": "{}"}]}
                 mock_client.post.return_value = mock_response

@@ -4,7 +4,7 @@ Tests external API integrations with mocked HTTP responses.
 """
 
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, patch, MagicMock
 import httpx
 
 from app.services.data_fetcher import (
@@ -25,7 +25,7 @@ class TestDataFetcher:
         """Test successful gene symbol resolution."""
         mock_client = AsyncMock()
         mock_client.get.return_value.json.return_value = sample_gene_data
-        mock_client.get.return_value.raise_for_status = AsyncMock()
+        mock_client.get.return_value.raise_for_status = MagicMock()
         
         with patch('app.services.data_fetcher.fetch_json', return_value=sample_gene_data):
             ensembl_id, synonyms = await resolve_gene_symbol(mock_client, "TP53")
@@ -219,7 +219,7 @@ class TestDataFetcher:
             AsyncMock()
         ]
         mock_client.get.return_value.json.return_value = {"test": "data"}
-        mock_client.get.return_value.raise_for_status = AsyncMock()
+        mock_client.get.return_value.raise_for_status = MagicMock()
         
         from app.services.data_fetcher import fetch_json
         

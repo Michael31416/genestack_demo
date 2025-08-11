@@ -15,12 +15,7 @@ from app.models import Base, get_db_engine, get_session_maker
 from app.main import app
 
 
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create an instance of the default event loop for the test session."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
+# Removed deprecated event_loop fixture - using pytest-asyncio default
 
 
 @pytest.fixture

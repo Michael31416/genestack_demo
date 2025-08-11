@@ -298,19 +298,19 @@ class TestAnalysisService:
             model="gpt-5-mini"
         )
         
+        # Mock the individual API functions instead of asyncio.gather
         with patch('app.services.analysis_service.resolve_gene_symbol', 
                   return_value=("ENSG00000141510", ["TP53"])):
             with patch('app.services.analysis_service.resolve_disease_label',
                       return_value=("EFO_0000616", None, ["lung cancer"])):
-                with patch('app.services.analysis_service.asyncio.gather') as mock_gather:
-                    # Simulate some tasks succeeding, others failing
-                    mock_gather.return_value = [
-                        {"overall_association_score": 0.85},  # OpenTargets success
-                        Exception("Literature API error"),     # Literature fails
-                        [{"association_id": "123"}]           # GWAS success
-                    ]
-                    
-                    evidence = await service._fetch_evidence(request)
+                with patch('app.services.analysis_service.get_opentargets_association',
+                          return_value={"overall_association_score": 0.85}):
+                    with patch('app.services.analysis_service.get_literature_evidence',
+                              side_effect=Exception("Literature API error")):
+                        with patch('app.services.analysis_service.get_gwas_associations',
+                                  return_value=[{"association_id": "123"}]):
+                            
+                            evidence = await service._fetch_evidence(request)
         
         # Should handle exceptions gracefully
         assert evidence["opentargets"]["overall_association_score"] == 0.85
