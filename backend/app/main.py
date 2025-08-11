@@ -31,12 +31,30 @@ from .schemas import (
 from .services.analysis_service import AnalysisService
 
 
-# Database setup
-engine = get_db_engine()
-SessionLocal = get_session_maker(engine)
+# Database setup - lazy initialization
+_engine = None
+_SessionLocal = None
+
+
+def get_engine():
+    """Get or create the database engine."""
+    global _engine
+    if _engine is None:
+        _engine = get_db_engine()
+    return _engine
+
+
+def get_session_local():
+    """Get or create the session maker."""
+    global _SessionLocal
+    if _SessionLocal is None:
+        _SessionLocal = get_session_maker(get_engine())
+    return _SessionLocal
 
 
 def get_db():
+    """Dependency to get database session."""
+    SessionLocal = get_session_local()
     db = SessionLocal()
     try:
         yield db
