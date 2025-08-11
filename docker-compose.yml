@@ -1,0 +1,12 @@
+version: '3.8'
+
+services:
+  web:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./database:/app/database
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
