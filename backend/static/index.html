@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gene-Disease Analysis Service</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Gene-Disease Analysis Service</h1>
+            <div id="user-info" class="user-info" style="display: none;">
+                <span>Logged in as: <strong id="username-display"></strong></span>
+                <button id="logout-btn" class="btn-secondary">Logout</button>
+            </div>
+        </header>
+
+        <!-- Login Section -->
+        <div id="login-section" class="section">
+            <h2>Login</h2>
+            <form id="login-form">
+                <div class="form-group">
+                    <label for="username">Username:</label>
+                    <input type="text" id="username" name="username" required>
+                </div>
+                
+                <div class="form-group">
+                    <label for="api-provider">API Provider:</label>
+                    <select id="api-provider" name="api_provider" required>
+                        <option value="openai">OpenAI</option>
+                        <option value="anthropic">Anthropic</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="api-key">API Key:</label>
+                    <input type="password" id="api-key" name="api_key" required>
+                    <small>Your API key is stored securely for this session only</small>
+                </div>
+                
+                <button type="submit" class="btn-primary">Login</button>
+            </form>
+        </div>
+
+        <!-- Analysis Section -->
+        <div id="analysis-section" class="section" style="display: none;">
+            <h2>New Analysis</h2>
+            <form id="analysis-form">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="gene">Gene Symbol:</label>
+                        <input type="text" id="gene" name="gene" placeholder="e.g., TP53" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="disease">Disease:</label>
+                        <input type="text" id="disease" name="disease" placeholder="e.g., lung cancer" required>
+                    </div>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="since-year">Literature Since Year:</label>
+                        <input type="number" id="since-year" name="since_year" value="2015" min="1990" max="2025">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="max-abstracts">Max Abstracts:</label>
+                        <input type="number" id="max-abstracts" name="max_abstracts" value="8" min="1" max="25">
+                    </div>
+                </div>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="include-gwas" name="include_gwas" checked>
+                            Include GWAS Catalog Data
+                        </label>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="model">LLM Model:</label>
+                        <select id="model" name="model">
+                            <option value="gpt-5-mini">GPT-5 Mini (OpenAI)</option>
+                            <option value="gpt-5">GPT-5 (OpenAI)</option>
+                            <option value="gpt-5-nano">GPT-5 Nano (OpenAI)</option>
+                            <option value="claude-3-haiku-20240307">Claude 3 Haiku (Anthropic)</option>
+                            <option value="claude-3-sonnet-20240229">Claude 3 Sonnet (Anthropic)</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <button type="submit" class="btn-primary">Analyze</button>
+            </form>
+            
+            <!-- Current Analysis Status -->
+            <div id="analysis-status" class="analysis-status" style="display: none;">
+                <h3>Analysis Progress</h3>
+                <div class="status-message">
+                    <span id="status-text">Initializing...</span>
+                    <div class="spinner" id="status-spinner"></div>
+                </div>
+            </div>
+            
+            <!-- Analysis Results -->
+            <div id="analysis-results" class="results" style="display: none;">
+                <h3>Analysis Results</h3>
+                <div id="results-content"></div>
+            </div>
+        </div>
+
+        <!-- History Section -->
+        <div id="history-section" class="section" style="display: none;">
+            <h2>Analysis History</h2>
+            <button id="refresh-history" class="btn-secondary">Refresh</button>
+            <div id="history-list" class="history-list"></div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
