@@ -31,6 +31,59 @@ from .schemas import (
 from .services.analysis_service import AnalysisService
 
 
+# In-memory session storage for API keys (secure approach)
+class SessionStore:
+    def __init__(self, session_timeout_hours: int = 24):
+        self.sessions: dict = {}
+        self.session_timeout_hours = session_timeout_hours
+    
+    def create_session(self, user_id: int, api_provider: str, api_key: str) -> str:
+        import time
+        session_id = str(uuid.uuid4())
+        self.sessions[session_id] = {
+            'user_id': user_id,
+            'api_provider': api_provider,
+            'api_key': api_key,  # Only stored in memory - never persisted
+            'created_at': time.time(),
+            'last_used': time.time()
+        }
+        return session_id
+    
+    def get_session(self, session_id: str) -> dict:
+        import time
+        if session_id not in self.sessions:
+            return None
+        
+        session = self.sessions[session_id]
+        
+        # Check if session has expired
+        if time.time() - session['created_at'] > (self.session_timeout_hours * 3600):
+            del self.sessions[session_id]
+            return None
+        
+        # Update last used time
+        session['last_used'] = time.time()
+        return session
+    
+    def delete_session(self, session_id: str):
+        if session_id in self.sessions:
+            del self.sessions[session_id]
+    
+    def cleanup_expired_sessions(self):
+        """Remove expired sessions"""
+        import time
+        current_time = time.time()
+        expired_sessions = [
+            sid for sid, session in self.sessions.items()
+            if current_time - session['created_at'] > (self.session_timeout_hours * 3600)
+        ]
+        for sid in expired_sessions:
+            del self.sessions[sid]
+
+# Global secure session store instance
+session_store = SessionStore()
+
+
 # Database setup - lazy initialization
 _engine = None
 _SessionLocal = None
@@ -104,6 +157,18 @@ app = FastAPI(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# Startup event for session cleanup
+@app.on_event("startup")
+async def startup_event():
+    """Start periodic cleanup of expired sessions."""
+    async def cleanup_sessions():
+        while True:
+            await asyncio.sleep(3600)  # Run every hour
+            session_store.cleanup_expired_sessions()
+            print(f"Cleaned up expired sessions. Active sessions: {len(session_store.sessions)}")
+    
+    asyncio.create_task(cleanup_sessions())
+
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -118,7 +183,7 @@ app.add_middleware(
 @app.post("/api/v1/auth/login", response_model=LoginResponse)
 @limiter.limit("10/minute")
 async def login(request: Request, login_request: LoginRequest, db: Session = Depends(get_db)):
-    """Create or retrieve user session."""
+    """Create or retrieve user session with secure API key handling."""
     # Get or create user
     user = db.query(User).filter(User.username == login_request.username).first()
     if not user:
@@ -127,15 +192,21 @@ async def login(request: Request, login_request: LoginRequest, db: Session = Dep
         db.commit()
         db.refresh(user)
     
-    # Create new session
-    session_id = str(uuid.uuid4())
-    session = UserSession(
+    # Create secure session (API key stored only in memory)
+    session_id = session_store.create_session(
+        user_id=user.id,
+        api_provider=login_request.api_provider,
+        api_key=login_request.api_key  # Stored only in memory - never persisted
+    )
+    
+    # Create database session record WITHOUT the API key
+    db_session = UserSession(
         id=session_id,
         user_id=user.id,
         api_provider=login_request.api_provider,
-        api_key_encrypted=login_request.api_key  # In production, encrypt this!
+        api_key_encrypted=None  # Explicitly set to None - no persistence of API keys
     )
-    db.add(session)
+    db.add(db_session)
     db.commit()
     
     return LoginResponse(
@@ -143,6 +214,22 @@ async def login(request: Request, login_request: LoginRequest, db: Session = Dep
         username=user.username,
         message="Login successful"
     )
+
+
+@app.post("/api/v1/auth/logout")
+@limiter.limit("10/minute")
+async def logout(request: Request, session_id: str, db: Session = Depends(get_db)):
+    """Logout and invalidate session."""
+    # Remove from secure store (this removes the API key from memory)
+    session_store.delete_session(session_id)
+    
+    # Mark database session as invalid (optional - could also delete it)
+    db_session = db.query(UserSession).filter(UserSession.id == session_id).first()
+    if db_session:
+        db.delete(db_session)
+        db.commit()
+    
+    return {"message": "Logged out successfully"}
 
 
 @app.post("/api/v1/analyses", response_model=AnalysisResponse)
@@ -155,17 +242,22 @@ async def create_analysis(
     db: Session = Depends(get_db)
 ):
     """Start a new gene-disease analysis."""
-    # Validate session
-    session = db.query(UserSession).filter(UserSession.id == session_id).first()
-    if not session:
+    # Validate session in both database and secure store
+    db_session = db.query(UserSession).filter(UserSession.id == session_id).first()
+    if not db_session:
         raise HTTPException(status_code=401, detail="Invalid session")
     
+    # Get secure session with API key
+    secure_session = session_store.get_session(session_id)
+    if not secure_session:
+        raise HTTPException(status_code=401, detail="Session expired or invalid")
+    
     # Update session last_used
-    session.last_used = datetime.utcnow()
+    db_session.last_used = datetime.utcnow()
     
     # Create analysis record
     analysis = Analysis(
-        user_id=session.user_id,
+        user_id=db_session.user_id,
         session_id=session_id,
         gene_symbol=analysis_request.gene,
         disease_label=analysis_request.disease,
@@ -175,14 +267,14 @@ async def create_analysis(
     db.commit()
     db.refresh(analysis)
     
-    # Start analysis in background
+    # Start analysis in background with secure API key
     background_tasks.add_task(
         run_analysis_task,
         analysis.id,
         analysis_request,
-        session.id,
-        session.api_provider,
-        session.api_key_encrypted
+        session_id,
+        secure_session['api_provider'],
+        secure_session['api_key']  # Retrieved from secure memory store
     )
     
     return AnalysisResponse(
@@ -213,11 +305,11 @@ async def run_analysis_task(
         "message": "Starting analysis..."
     })
     
-    # Create session object for service
+    # Create session object for service with secure API key
     session = UserSession(
         id=session_id,
         api_provider=api_provider,
-        api_key_encrypted=api_key
+        api_key_encrypted=api_key  # This is the actual API key from memory store
     )
     
     # Run analysis
