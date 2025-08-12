@@ -203,6 +203,7 @@ async def run_analysis_task(
 ):
     """Background task to run analysis."""
     # Create new database session for background task
+    SessionLocal = get_session_local()
     db = SessionLocal()
     service = AnalysisService(db)
     
