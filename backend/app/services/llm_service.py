@@ -72,7 +72,7 @@ Rules:
 4) Prefer human data over model organisms unless human is absent.
 5) Output valid JSON only matching the schema below.
 6) Every claim in `key_points` must reference `source_ids` pointing to items in the input.
-7) If evidence is insufficient, say so and explain next steps.
+7) If evidence is insufficient, say so in the `conflicts_or_gaps` section.
 
 Schema:
 {
@@ -86,8 +86,7 @@ Schema:
   "key_points": [
     {"statement": "...", "source_ids": ["gwas_catalog:PMID...", "literature:PMID..."]}
   ],
-  "conflicts_or_gaps": [{"issue": "...", "source_ids": ["..."]}],
-  "recommended_next_steps": ["..."]
+  "conflicts_or_gaps": [{"issue": "...", "source_ids": ["..."]}]
 }
 """
 
@@ -137,9 +136,23 @@ class LLMService:
             "Content-Type": "application/json"
         }
         
+        # Determine which data sources were included
+        included_sources = []
+        if evidence_json.get("opentargets"):
+            included_sources.append("Open Targets Platform data")
+        if evidence_json.get("literature") and len(evidence_json.get("literature", [])) > 0:
+            included_sources.append("literature evidence")
+        if evidence_json.get("gwas_catalog") and len(evidence_json.get("gwas_catalog", [])) > 0:
+            included_sources.append("GWAS Catalog data")
+        
+        sources_note = ""
+        if included_sources:
+            sources_note = f"\n\nNOTE: The following data sources were ALREADY INCLUDED in this analysis: {', '.join(included_sources)}. Do not recommend obtaining data that has already been provided."
+        
         user_content = (
             "Task: Evaluate correlation between {gene} and {disease}. "
-            "Return JSON only. Use the provided evidence bundle.\n\n"
+            "Return JSON only. Use the provided evidence bundle."
+            f"{sources_note}\n\n"
             f"EVIDENCE:\n{json.dumps(evidence_json, ensure_ascii=False)}"
         )
         
@@ -216,7 +229,6 @@ class LLMService:
                     "drivers": {},
                     "key_points": [],
                     "conflicts_or_gaps": [],
-                    "recommended_next_steps": [],
                     "_raw": content
                 }
     
@@ -232,9 +244,23 @@ class LLMService:
             "Content-Type": "application/json"
         }
         
+        # Determine which data sources were included
+        included_sources = []
+        if evidence_json.get("opentargets"):
+            included_sources.append("Open Targets Platform data")
+        if evidence_json.get("literature") and len(evidence_json.get("literature", [])) > 0:
+            included_sources.append("literature evidence")
+        if evidence_json.get("gwas_catalog") and len(evidence_json.get("gwas_catalog", [])) > 0:
+            included_sources.append("GWAS Catalog data")
+        
+        sources_note = ""
+        if included_sources:
+            sources_note = f"\n\nNOTE: The following data sources were ALREADY INCLUDED in this analysis: {', '.join(included_sources)}. Do not recommend obtaining data that has already been provided."
+        
         user_content = (
             "Task: Evaluate correlation between gene and disease. "
-            "Return ONLY valid JSON matching the schema provided in the system prompt.\n\n"
+            "Return ONLY valid JSON matching the schema provided in the system prompt."
+            f"{sources_note}\n\n"
             f"EVIDENCE:\n{json.dumps(evidence_json, ensure_ascii=False)}"
         )
         
@@ -283,7 +309,6 @@ class LLMService:
                     "drivers": {},
                     "key_points": [],
                     "conflicts_or_gaps": [],
-                    "recommended_next_steps": [],
                     "_raw": content
                 }
     def _handle_http_error(self, provider: str, error: httpx.HTTPStatusError) -> None:

@@ -11,10 +11,38 @@ class GeneDiseasApp {
         this.init();
     }
     
-    init() {
-        // Check if logged in
+    clearSession() {
+        this.sessionId = null;
+        this.username = null;
+        this.apiProvider = null;
+        
+        localStorage.removeItem('session_id');
+        localStorage.removeItem('username');
+        localStorage.removeItem('api_provider');
+    }
+    
+    async init() {
+        // Check if we have stored session data
         if (this.sessionId && this.username) {
-            this.showLoggedInUI();
+            // Validate session with backend
+            try {
+                const response = await fetch(`/api/v1/analyses?session_id=${this.sessionId}&limit=1`);
+                if (response.ok) {
+                    // Session is valid, stay logged in
+                    this.showLoggedInUI();
+                } else {
+                    // Session expired or invalid, clear and show login
+                    this.clearSession();
+                    this.hideLoggedInUI();
+                }
+            } catch (error) {
+                // Network error or backend down, clear session and show login
+                this.clearSession();
+                this.hideLoggedInUI();
+            }
+        } else {
+            // No stored session, show login page
+            this.hideLoggedInUI();
         }
         
         // Bind event handlers
@@ -106,14 +134,7 @@ class GeneDiseasApp {
     }
     
     handleLogout() {
-        this.sessionId = null;
-        this.username = null;
-        this.apiProvider = null;
-        
-        localStorage.removeItem('session_id');
-        localStorage.removeItem('username');
-        localStorage.removeItem('api_provider');
-        
+        this.clearSession();
         this.hideLoggedInUI();
     }
     
@@ -284,14 +305,6 @@ class GeneDiseasApp {
                 html += '</ul>';
             }
             
-            // Recommended next steps
-            if (result.llm_output.recommended_next_steps && result.llm_output.recommended_next_steps.length > 0) {
-                html += '<h5>Recommended Next Steps:</h5><ul>';
-                result.llm_output.recommended_next_steps.forEach(step => {
-                    html += `<li>${step}</li>`;
-                });
-                html += '</ul>';
-            }
             
             html += '</div>';
         }
@@ -316,41 +329,23 @@ class GeneDiseasApp {
                 html += `
                     <div class="evidence-item">
                         <h5>Literature Evidence</h5>
-                        <p>Found ${result.evidence.literature.length} relevant publications</p>
-                        <div class="literature-references">
+                        <p>Found ${result.evidence.literature.length} relevant publications:</p>
+                        <div class="literature-links">
                 `;
                 
                 result.evidence.literature.forEach((pub, index) => {
                     const title = pub.title || 'Untitled';
-                    const author = pub.author || 'Unknown authors';
-                    const year = pub.year || '';
-                    const source = pub.source || '';
-                    const pmid = pub.pmid || '';
                     const uri = pub.uri || '';
-                    
-                    // Format publication info
-                    let pubInfo = '';
-                    if (year && source) {
-                        pubInfo = `${year} • ${source}`;
-                    } else if (year) {
-                        pubInfo = year;
-                    } else if (source) {
-                        pubInfo = source;
-                    }
+                    const pmid = pub.pmid || '';
+                    const year = pub.year || '';
                     
                     html += `
-                        <div class="literature-ref">
-                            <div class="ref-title">
-                                ${uri ? `<a href="${uri}" target="_blank" rel="noopener">${title}</a>` : title}
-                            </div>
-                            <div class="ref-authors">${author}</div>
-                            ${pubInfo ? `<div class="ref-info">${pubInfo}</div>` : ''}
-                            ${pmid ? `<div class="ref-pmid">PMID: ${pmid}</div>` : ''}
-                            ${pub.sentences && pub.sentences.length > 0 ? `
-                                <div class="ref-evidence">
-                                    <strong>Key evidence:</strong> ${pub.sentences.join(' • ')}
-                                </div>
-                            ` : ''}
+                        <div class="lit-link">
+                            ${uri ? 
+                                `<a href="${uri}" target="_blank" rel="noopener">${title}</a>` : 
+                                title}
+                            ${year ? ` (${year})` : ''}
+                            ${pmid ? ` <span class="pmid">PMID: ${pmid}</span>` : ''}
                         </div>
                     `;
                 });

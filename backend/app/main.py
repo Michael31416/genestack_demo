@@ -32,10 +32,12 @@ from .services.analysis_service import AnalysisService
 
 
 # In-memory session storage for API keys (secure approach)
+SESSION_TIMEOUT_MINUTES = 20
+
 class SessionStore:
-    def __init__(self, session_timeout_hours: int = 24):
+    def __init__(self, session_timeout_minutes: int = SESSION_TIMEOUT_MINUTES):
         self.sessions: dict = {}
-        self.session_timeout_hours = session_timeout_hours
+        self.session_timeout_minutes = session_timeout_minutes
     
     def create_session(self, user_id: int, api_provider: str, api_key: str) -> str:
         import time
@@ -56,8 +58,8 @@ class SessionStore:
         
         session = self.sessions[session_id]
         
-        # Check if session has expired
-        if time.time() - session['created_at'] > (self.session_timeout_hours * 3600):
+        # Check if session has expired based on inactivity (last_used time)
+        if time.time() - session['last_used'] > (self.session_timeout_minutes * 60):
             del self.sessions[session_id]
             return None
         
@@ -70,12 +72,12 @@ class SessionStore:
             del self.sessions[session_id]
     
     def cleanup_expired_sessions(self):
-        """Remove expired sessions"""
+        """Remove expired sessions based on inactivity"""
         import time
         current_time = time.time()
         expired_sessions = [
             sid for sid, session in self.sessions.items()
-            if current_time - session['created_at'] > (self.session_timeout_hours * 3600)
+            if current_time - session['last_used'] > (self.session_timeout_minutes * 60)
         ]
         for sid in expired_sessions:
             del self.sessions[sid]
@@ -388,14 +390,17 @@ async def get_history(
     db: Session = Depends(get_db)
 ):
     """Get user's analysis history."""
-    # Validate session
-    session = db.query(UserSession).filter(UserSession.id == session_id).first()
-    if not session:
-        raise HTTPException(status_code=401, detail="Invalid session")
+    # Validate session using in-memory session store
+    secure_session = session_store.get_session(session_id)
+    if not secure_session:
+        raise HTTPException(status_code=401, detail="Session expired or invalid")
+    
+    # Get database session record to find user_id
+    user_id = secure_session['user_id']
     
     # Get analyses
     analyses = db.query(Analysis).filter(
-        Analysis.user_id == session.user_id
+        Analysis.user_id == user_id
     ).order_by(Analysis.created_at.desc()).limit(limit).all()
     
     history = []
