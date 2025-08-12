@@ -22,6 +22,12 @@ from sqlalchemy.orm import Session
 from sqlalchemy import create_engine
 import uvicorn
 
+from .config import (
+    SESSION_TIMEOUT_MINUTES, SECONDS_PER_MINUTE, SESSION_CLEANUP_INTERVAL_SECONDS,
+    LOGIN_RATE_LIMIT, ANALYSIS_RATE_LIMIT, WEBSOCKET_KEEPALIVE_SECONDS,
+    DEFAULT_HISTORY_LIMIT, APP_VERSION,
+    HTTP_STATUS_UNAUTHORIZED, HTTP_STATUS_NOT_FOUND
+)
 from .models import Base, User, Session as UserSession, Analysis, Result, get_db_engine, get_session_maker
 from .schemas import (
     LoginRequest, LoginResponse, 
@@ -29,10 +35,6 @@ from .schemas import (
     HistoryItem, ErrorResponse
 )
 from .services.analysis_service import AnalysisService
-
-
-# In-memory session storage for API keys (secure approach)
-SESSION_TIMEOUT_MINUTES = 20
 
 class SessionStore:
     def __init__(self, session_timeout_minutes: int = SESSION_TIMEOUT_MINUTES):
@@ -59,7 +61,7 @@ class SessionStore:
         session = self.sessions[session_id]
         
         # Check if session has expired based on inactivity (last_used time)
-        if time.time() - session['last_used'] > (self.session_timeout_minutes * 60):
+        if time.time() - session['last_used'] > (self.session_timeout_minutes * SECONDS_PER_MINUTE):
             del self.sessions[session_id]
             return None
         
@@ -77,7 +79,7 @@ class SessionStore:
         current_time = time.time()
         expired_sessions = [
             sid for sid, session in self.sessions.items()
-            if current_time - session['last_used'] > (self.session_timeout_minutes * 60)
+            if current_time - session['last_used'] > (self.session_timeout_minutes * SECONDS_PER_MINUTE)
         ]
         for sid in expired_sessions:
             del self.sessions[sid]
@@ -152,7 +154,7 @@ limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(
     title="Gene-Disease Analysis Service",
     description="Analyze correlations between genes and diseases using public data and LLMs",
-    version="1.0.0"
+    version=APP_VERSION
 )
 
 # Add rate limit error handler
@@ -165,7 +167,7 @@ async def startup_event():
     """Start periodic cleanup of expired sessions."""
     async def cleanup_sessions():
         while True:
-            await asyncio.sleep(3600)  # Run every hour
+            await asyncio.sleep(SESSION_CLEANUP_INTERVAL_SECONDS)  # Run every hour
             session_store.cleanup_expired_sessions()
             print(f"Cleaned up expired sessions. Active sessions: {len(session_store.sessions)}")
     
@@ -183,7 +185,7 @@ app.add_middleware(
 
 # API Routes
 @app.post("/api/v1/auth/login", response_model=LoginResponse)
-@limiter.limit("10/minute")
+@limiter.limit(LOGIN_RATE_LIMIT)
 async def login(request: Request, login_request: LoginRequest, db: Session = Depends(get_db)):
     """Create or retrieve user session with secure API key handling."""
     # Get or create user
@@ -219,7 +221,7 @@ async def login(request: Request, login_request: LoginRequest, db: Session = Dep
 
 
 @app.post("/api/v1/auth/logout")
-@limiter.limit("10/minute")
+@limiter.limit(LOGIN_RATE_LIMIT)
 async def logout(request: Request, session_id: str, db: Session = Depends(get_db)):
     """Logout and invalidate session."""
     # Remove from secure store (this removes the API key from memory)
@@ -235,7 +237,7 @@ async def logout(request: Request, session_id: str, db: Session = Depends(get_db
 
 
 @app.post("/api/v1/analyses", response_model=AnalysisResponse)
-@limiter.limit("20/minute")
+@limiter.limit(ANALYSIS_RATE_LIMIT)
 async def create_analysis(
     request: Request,
     analysis_request: AnalysisRequest,
@@ -247,12 +249,12 @@ async def create_analysis(
     # Validate session in both database and secure store
     db_session = db.query(UserSession).filter(UserSession.id == session_id).first()
     if not db_session:
-        raise HTTPException(status_code=401, detail="Invalid session")
+        raise HTTPException(status_code=HTTP_STATUS_UNAUTHORIZED, detail="Invalid session")
     
     # Get secure session with API key
     secure_session = session_store.get_session(session_id)
     if not secure_session:
-        raise HTTPException(status_code=401, detail="Session expired or invalid")
+        raise HTTPException(status_code=HTTP_STATUS_UNAUTHORIZED, detail="Session expired or invalid")
     
     # Update session last_used
     db_session.last_used = datetime.utcnow()
@@ -346,7 +348,7 @@ async def get_analysis(
     # Validate session
     session = db.query(UserSession).filter(UserSession.id == session_id).first()
     if not session:
-        raise HTTPException(status_code=401, detail="Invalid session")
+        raise HTTPException(status_code=HTTP_STATUS_UNAUTHORIZED, detail="Invalid session")
     
     # Get analysis
     analysis = db.query(Analysis).filter(
@@ -355,7 +357,7 @@ async def get_analysis(
     ).first()
     
     if not analysis:
-        raise HTTPException(status_code=404, detail="Analysis not found")
+        raise HTTPException(status_code=HTTP_STATUS_NOT_FOUND, detail="Analysis not found")
     
     # Get result if available
     result = db.query(Result).filter(Result.analysis_id == analysis_id).first()
@@ -386,14 +388,14 @@ async def get_analysis(
 @app.get("/api/v1/analyses", response_model=List[HistoryItem])
 async def get_history(
     session_id: str,
-    limit: int = 50,
+    limit: int = DEFAULT_HISTORY_LIMIT,
     db: Session = Depends(get_db)
 ):
     """Get user's analysis history."""
     # Validate session using in-memory session store
     secure_session = session_store.get_session(session_id)
     if not secure_session:
-        raise HTTPException(status_code=401, detail="Session expired or invalid")
+        raise HTTPException(status_code=HTTP_STATUS_UNAUTHORIZED, detail="Session expired or invalid")
     
     # Get database session record to find user_id
     user_id = secure_session['user_id']
@@ -431,7 +433,7 @@ async def websocket_endpoint(websocket: WebSocket, analysis_id: int):
     try:
         while True:
             # Keep connection alive
-            await asyncio.sleep(1)
+            await asyncio.sleep(WEBSOCKET_KEEPALIVE_SECONDS)
             await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(websocket, analysis_id)

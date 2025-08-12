@@ -8,6 +8,13 @@ from typing import List, Dict, Any, Optional, Tuple
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from ..config import (
+    HTTP_TIMEOUT_SHORT, HTTP_TIMEOUT_MEDIUM,
+    DEFAULT_ENSEMBL_ROWS, DEFAULT_OPENTARGETS_SIZE, DEFAULT_LITERATURE_PAGE_SIZE,
+    MAX_GWAS_RECORDS, LITERATURE_FUTURE_YEAR,
+    RETRY_MIN_WAIT_SECONDS, RETRY_MAX_WAIT_SECONDS
+)
+
 
 OT_GQL_URL = "https://api.platform.opentargets.org/api/v4/graphql"
 ENSEMBL_LOOKUP = "https://rest.ensembl.org/lookup/symbol/homo_sapiens/{symbol}?content-type=application/json"
@@ -19,7 +26,7 @@ HEADERS_JSON = {"Accept": "application/json"}
 HEADERS_GQL = {"Content-Type": "application/json", "Accept": "application/json"}
 
 
-@retry(wait=wait_exponential(multiplier=0.5, min=1, max=8), stop=stop_after_attempt(3))
+@retry(wait=wait_exponential(multiplier=0.5, min=RETRY_MIN_WAIT_SECONDS, max=RETRY_MAX_WAIT_SECONDS), stop=stop_after_attempt(3))
 async def fetch_json(
     client: httpx.AsyncClient,
     url: str,
@@ -30,10 +37,10 @@ async def fetch_json(
 ) -> Any:
     headers = headers or HEADERS_JSON
     if method.upper() == "GET":
-        resp = await client.get(url, params=params, headers=headers, timeout=30)
+        resp = await client.get(url, params=params, headers=headers, timeout=HTTP_TIMEOUT_SHORT)
     else:
         resp = await client.post(
-            url, params=params, headers=headers, json=json_body, timeout=45
+            url, params=params, headers=headers, json=json_body, timeout=HTTP_TIMEOUT_MEDIUM
         )
     resp.raise_for_status()
     return resp.json()
@@ -61,7 +68,7 @@ async def resolve_disease_label(
         "q": label,
         "ontology": "efo,mondo",
         "type": "class",
-        "rows": 25,
+        "rows": DEFAULT_ENSEMBL_ROWS,
         "exact": "false",
     }
     data = await fetch_json(client, OLS_SEARCH, params=params)
@@ -126,7 +133,7 @@ async def get_opentargets_association(
     client: httpx.AsyncClient, ensg: str, efo_id: str
 ) -> Optional[Dict[str, Any]]:
     index = 0
-    size = 50
+    size = DEFAULT_OPENTARGETS_SIZE
     total = None
     while True:
         variables = {"efoId": efo_id, "index": index, "size": size}
@@ -185,11 +192,11 @@ async def get_literature_evidence(
 ) -> List[Dict[str, Any]]:
     gene_q = " OR ".join([f'"{t}"' if " " in t else t for t in gene_terms[:5]])
     dis_q = " OR ".join([f'"{t}"' if " " in t else t for t in disease_terms[:8]])
-    query = f"({gene_q}) AND ({dis_q}) AND (PUB_YEAR:[{since_year} TO 3000])"
+    query = f"({gene_q}) AND ({dis_q}) AND (PUB_YEAR:[{since_year} TO {LITERATURE_FUTURE_YEAR}])"
     params = {
         "query": query,
         "resultType": "core",
-        "pageSize": min(max_records, 25),
+        "pageSize": min(max_records, DEFAULT_LITERATURE_PAGE_SIZE),
         "format": "json",
     }
     data = await fetch_json(client, EUROPE_PMC_SEARCH, params=params)
@@ -230,7 +237,7 @@ async def get_gwas_associations(
     gene_symbol: str,
     max_records: int = 20,
 ) -> List[Dict[str, Any]]:
-    params = {"efoTrait": efo_label_or_id, "size": min(max_records, 1000)}
+    params = {"efoTrait": efo_label_or_id, "size": min(max_records, MAX_GWAS_RECORDS)}
     url = f"{GWAS_API_BASE}/associations/search"
     try:
         data = await fetch_json(client, url, params=params)

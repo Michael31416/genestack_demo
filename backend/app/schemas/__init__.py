@@ -3,6 +3,12 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
 
+from ..config import (
+    USERNAME_MAX_LENGTH, GENE_MAX_LENGTH, DISEASE_MAX_LENGTH,
+    MIN_PUBLICATION_YEAR, MAX_PUBLICATION_YEAR, DEFAULT_SINCE_YEAR,
+    DEFAULT_MAX_ABSTRACTS, MIN_ABSTRACTS, MAX_ABSTRACTS, DEFAULT_LLM_MODEL
+)
+
 
 class APIProvider(str, Enum):
     openai = "openai"
@@ -10,7 +16,7 @@ class APIProvider(str, Enum):
 
 
 class LoginRequest(BaseModel):
-    username: str = Field(..., min_length=1, max_length=100)
+    username: str = Field(..., min_length=1, max_length=USERNAME_MAX_LENGTH)
     api_provider: APIProvider
     api_key: str = Field(..., min_length=1)
 
@@ -22,12 +28,12 @@ class LoginResponse(BaseModel):
 
 
 class AnalysisRequest(BaseModel):
-    gene: str = Field(..., min_length=1, max_length=50)
-    disease: str = Field(..., min_length=1, max_length=200)
-    since_year: int = Field(2015, ge=1990, le=2025)
-    max_abstracts: int = Field(8, ge=1, le=25)
+    gene: str = Field(..., min_length=1, max_length=GENE_MAX_LENGTH)
+    disease: str = Field(..., min_length=1, max_length=DISEASE_MAX_LENGTH)
+    since_year: int = Field(DEFAULT_SINCE_YEAR, ge=MIN_PUBLICATION_YEAR, le=MAX_PUBLICATION_YEAR)
+    max_abstracts: int = Field(DEFAULT_MAX_ABSTRACTS, ge=MIN_ABSTRACTS, le=MAX_ABSTRACTS)
     include_gwas: bool = Field(True)
-    model: Optional[str] = Field("gpt-4o-mini", description="LLM model to use")
+    model: Optional[str] = Field(DEFAULT_LLM_MODEL, description="LLM model to use")
 
 
 class AnalysisStatus(str, Enum):

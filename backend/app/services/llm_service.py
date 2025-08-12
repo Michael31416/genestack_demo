@@ -10,6 +10,14 @@ from typing import Dict, Any, Optional
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
+from ..config import (
+    LLM_REQUESTS_PER_MINUTE, LLM_RATE_WINDOW_SECONDS, LLM_RATE_BUFFER_SECONDS,
+    RETRY_MIN_WAIT_SECONDS, RETRY_MAX_WAIT_SECONDS, RETRY_MULTIPLIER,
+    HTTP_TIMEOUT_LONG, OPENAI_MAX_COMPLETION_TOKENS, ANTHROPIC_MAX_TOKENS,
+    ANTHROPIC_API_VERSION,
+    HTTP_STATUS_UNAUTHORIZED, HTTP_STATUS_TOO_MANY_REQUESTS, HTTP_STATUS_BAD_REQUEST, HTTP_STATUS_SERVER_ERROR
+)
+
 
 class LLMRateLimitError(Exception):
     """Raised when LLM API rate limit is exceeded."""
@@ -37,10 +45,10 @@ class LLMServiceUnavailableError(Exception):
 _rate_limit_tracker = {}
 
 
-def _check_rate_limit(provider: str, requests_per_minute: int = 20) -> None:
+def _check_rate_limit(provider: str, requests_per_minute: int = LLM_REQUESTS_PER_MINUTE) -> None:
     """Check if we're within rate limits for the provider."""
     now = time.time()
-    window_start = now - 60  # 1 minute window
+    window_start = now - LLM_RATE_WINDOW_SECONDS  # 1 minute window
     
     if provider not in _rate_limit_tracker:
         _rate_limit_tracker[provider] = []
@@ -54,7 +62,7 @@ def _check_rate_limit(provider: str, requests_per_minute: int = 20) -> None:
     # Check if we're at the limit
     if len(_rate_limit_tracker[provider]) >= requests_per_minute:
         oldest_request = min(_rate_limit_tracker[provider])
-        wait_time = int(61 - (now - oldest_request))  # Wait until window clears + 1 sec
+        wait_time = int(LLM_RATE_BUFFER_SECONDS - (now - oldest_request))  # Wait until window clears + 1 sec
         raise LLMRateLimitError(
             f"Rate limit exceeded for {provider}. Try again in {wait_time} seconds.",
             retry_after=wait_time
@@ -97,7 +105,7 @@ class LLMService:
         self.api_key = api_key
         
     @retry(
-        wait=wait_exponential(multiplier=1, min=2, max=30),
+        wait=wait_exponential(multiplier=RETRY_MULTIPLIER, min=RETRY_MIN_WAIT_SECONDS, max=RETRY_MAX_WAIT_SECONDS),
         stop=stop_after_attempt(3),
         retry=retry_if_exception_type((
             httpx.TimeoutException, 
@@ -112,7 +120,7 @@ class LLMService:
     ) -> Dict[str, Any]:
         # Check our internal rate limits first
         try:
-            _check_rate_limit(f"{self.provider}_internal", requests_per_minute=20)
+            _check_rate_limit(f"{self.provider}_internal", requests_per_minute=LLM_REQUESTS_PER_MINUTE)
         except LLMRateLimitError as e:
             # For internal rate limits, wait and then raise without retry
             await asyncio.sleep(min(e.retry_after or 60, 60))
@@ -162,10 +170,10 @@ class LLMService:
                 {"role": "system", "content": LLM_SYSTEM_PROMPT},
                 {"role": "user", "content": user_content}
             ],
-            "max_completion_tokens": 4000
+            "max_completion_tokens": OPENAI_MAX_COMPLETION_TOKENS
         }
         
-        async with httpx.AsyncClient(timeout=90) as client:
+        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_LONG) as client:
             try:
                 # Try with JSON response format for newer models
                 payload_with_json = dict(payload, response_format={"type": "json_object"})
@@ -180,9 +188,9 @@ class LLMService:
                 status_code = e.response.status_code
                 
                 # Handle specific error types with appropriate exceptions
-                if status_code == 401:
+                if status_code == HTTP_STATUS_UNAUTHORIZED:
                     raise LLMAuthenticationError(f"Invalid OpenAI API key: {txt}") from e
-                elif status_code == 429:
+                elif status_code == HTTP_STATUS_TOO_MANY_REQUESTS:
                     # Parse rate limit info from headers
                     retry_after = None
                     if 'retry-after' in e.response.headers:
@@ -194,9 +202,9 @@ class LLMService:
                         raise LLMQuotaExceededError(f"OpenAI quota exceeded: {txt}") from e
                     else:
                         raise LLMRateLimitError(f"OpenAI rate limit exceeded: {txt}", retry_after) from e
-                elif status_code >= 500:
+                elif status_code >= HTTP_STATUS_SERVER_ERROR:
                     raise LLMServiceUnavailableError(f"OpenAI service unavailable: {txt}") from e
-                elif status_code == 400 and "response_format" in txt.lower():
+                elif status_code == HTTP_STATUS_BAD_REQUEST and "response_format" in txt.lower():
                     # Retry without response_format for older models
                     try:
                         resp = await client.post(
@@ -240,7 +248,7 @@ class LLMService:
         base_url = os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com/v1")
         headers = {
             "x-api-key": self.api_key,
-            "anthropic-version": "2023-06-01",
+            "anthropic-version": ANTHROPIC_API_VERSION,
             "Content-Type": "application/json"
         }
         
@@ -266,7 +274,7 @@ class LLMService:
         
         payload = {
             "model": model,
-            "max_tokens": 2000,
+            "max_tokens": ANTHROPIC_MAX_TOKENS,
             "temperature": 0.3,
             "system": LLM_SYSTEM_PROMPT,
             "messages": [
@@ -274,7 +282,7 @@ class LLMService:
             ]
         }
         
-        async with httpx.AsyncClient(timeout=90) as client:
+        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_LONG) as client:
             try:
                 resp = await client.post(
                     f"{base_url}/messages",
@@ -316,9 +324,9 @@ class LLMService:
         txt = error.response.text or ""
         status_code = error.response.status_code
         
-        if status_code == 401:
+        if status_code == HTTP_STATUS_UNAUTHORIZED:
             raise LLMAuthenticationError(f"Invalid {provider} API key: {txt}") from error
-        elif status_code == 429:
+        elif status_code == HTTP_STATUS_TOO_MANY_REQUESTS:
             retry_after = None
             if 'retry-after' in error.response.headers:
                 retry_after = int(error.response.headers['retry-after'])
@@ -327,7 +335,7 @@ class LLMService:
                 raise LLMQuotaExceededError(f"{provider} quota exceeded: {txt}") from error
             else:
                 raise LLMRateLimitError(f"{provider} rate limit exceeded: {txt}", retry_after) from error
-        elif status_code >= 500:
+        elif status_code >= HTTP_STATUS_SERVER_ERROR:
             raise LLMServiceUnavailableError(f"{provider} service unavailable: {txt}") from error
         else:
             raise RuntimeError(f"{provider} API error {status_code}: {txt}") from error
@@ -337,9 +345,9 @@ class LLMService:
         txt = response.text or ""
         status_code = response.status_code
         
-        if status_code == 401:
+        if status_code == HTTP_STATUS_UNAUTHORIZED:
             raise LLMAuthenticationError(f"Invalid Anthropic API key: {txt}")
-        elif status_code == 429:
+        elif status_code == HTTP_STATUS_TOO_MANY_REQUESTS:
             retry_after = None
             if 'retry-after' in response.headers:
                 retry_after = int(response.headers['retry-after'])
@@ -348,7 +356,7 @@ class LLMService:
                 raise LLMQuotaExceededError(f"Anthropic quota exceeded: {txt}")
             else:
                 raise LLMRateLimitError(f"Anthropic rate limit exceeded: {txt}", retry_after)
-        elif status_code >= 500:
+        elif status_code >= HTTP_STATUS_SERVER_ERROR:
             raise LLMServiceUnavailableError(f"Anthropic service unavailable: {txt}")
         else:
             raise RuntimeError(f"Anthropic API error {status_code}: {txt}")
