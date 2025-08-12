@@ -186,6 +186,8 @@ class TestAPIEndpoints:
     
     def test_get_history_success(self, client, db_session):
         """Test successful history retrieval."""
+        from app.main import session_store
+        
         # Create test data
         user = User(username="testuser")
         db_session.add(user)
@@ -198,6 +200,17 @@ class TestAPIEndpoints:
             api_key_encrypted="sk-test-key"
         )
         db_session.add(session)
+        
+        # Create in-memory session for validation
+        session_store.create_session(user.id, "openai", "sk-test-key")
+        # Use the session ID we want for testing
+        session_store.sessions["test-session-456"] = {
+            'user_id': user.id,
+            'api_provider': "openai",
+            'api_key': "sk-test-key",
+            'created_at': time.time(),
+            'last_used': time.time()
+        }
         
         # Create multiple analyses
         for i in range(3):
@@ -238,7 +251,7 @@ class TestAPIEndpoints:
     
     def test_get_history_empty(self, client, mock_login_request):
         """Test history retrieval with no analyses."""
-        # First login
+        # First login to create both database and in-memory session
         login_response = client.post("/api/v1/auth/login", json=mock_login_request)
         session_id = login_response.json()["session_id"]
         
@@ -252,10 +265,12 @@ class TestAPIEndpoints:
         """Test history retrieval with invalid session."""
         response = client.get("/api/v1/analyses?session_id=invalid-session")
         assert response.status_code == 401
-        assert response.json()["detail"] == "Invalid session"
+        assert response.json()["detail"] == "Session expired or invalid"
     
     def test_get_history_with_limit(self, client, db_session):
         """Test history retrieval with limit parameter."""
+        from app.main import session_store
+        
         # Create test data
         user = User(username="testuser")
         db_session.add(user)
@@ -268,6 +283,15 @@ class TestAPIEndpoints:
             api_key_encrypted="sk-test-key"
         )
         db_session.add(session)
+        
+        # Create in-memory session for validation
+        session_store.sessions["test-session-789"] = {
+            'user_id': user.id,
+            'api_provider': "openai",
+            'api_key': "sk-test-key",
+            'created_at': time.time(),
+            'last_used': time.time()
+        }
         
         # Create 5 analyses
         for i in range(5):
