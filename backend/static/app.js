@@ -317,6 +317,46 @@ class GeneDiseasApp {
                     <div class="evidence-item">
                         <h5>Literature Evidence</h5>
                         <p>Found ${result.evidence.literature.length} relevant publications</p>
+                        <div class="literature-references">
+                `;
+                
+                result.evidence.literature.forEach((pub, index) => {
+                    const title = pub.title || 'Untitled';
+                    const author = pub.author || 'Unknown authors';
+                    const year = pub.year || '';
+                    const source = pub.source || '';
+                    const pmid = pub.pmid || '';
+                    const uri = pub.uri || '';
+                    
+                    // Format publication info
+                    let pubInfo = '';
+                    if (year && source) {
+                        pubInfo = `${year} • ${source}`;
+                    } else if (year) {
+                        pubInfo = year;
+                    } else if (source) {
+                        pubInfo = source;
+                    }
+                    
+                    html += `
+                        <div class="literature-ref">
+                            <div class="ref-title">
+                                ${uri ? `<a href="${uri}" target="_blank" rel="noopener">${title}</a>` : title}
+                            </div>
+                            <div class="ref-authors">${author}</div>
+                            ${pubInfo ? `<div class="ref-info">${pubInfo}</div>` : ''}
+                            ${pmid ? `<div class="ref-pmid">PMID: ${pmid}</div>` : ''}
+                            ${pub.sentences && pub.sentences.length > 0 ? `
+                                <div class="ref-evidence">
+                                    <strong>Key evidence:</strong> ${pub.sentences.join(' • ')}
+                                </div>
+                            ` : ''}
+                        </div>
+                    `;
+                });
+                
+                html += `
+                        </div>
                     </div>
                 `;
             }
