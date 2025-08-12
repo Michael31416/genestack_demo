@@ -188,7 +188,9 @@ class GeneDiseasApp {
             this.ws.close();
         }
         
-        const wsUrl = `ws://${window.location.host}/api/v1/ws/${analysisId}`;
+        // Use wss:// for HTTPS and ws:// for HTTP
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${wsProtocol}//${window.location.host}/api/v1/ws/${analysisId}`;
         this.ws = new WebSocket(wsUrl);
         
         this.ws.onmessage = (event) => {
