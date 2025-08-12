@@ -176,7 +176,7 @@ class TestAnalysisErrorHandling:
         request = AnalysisRequest(
             gene="TP53",
             disease="lung cancer",
-            model="claude-3-haiku-20240307"
+            model="claude-sonnet-4-20250514"
         )
         
         service = AnalysisService(db_session)

@@ -142,7 +142,7 @@ class TestLLMService:
             mock_client_class.return_value.__aenter__.return_value = mock_client
             mock_client.post.return_value = mock_response
             
-            result = await service.analyze_correlation(evidence, "claude-3-haiku-20240307")
+            result = await service.analyze_correlation(evidence, "claude-sonnet-4-20250514")
         
         assert result["verdict"] == "moderate"
         assert result["confidence"] == 0.75

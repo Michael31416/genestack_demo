@@ -57,9 +57,8 @@ class GeneDiseasApp {
             `;
         } else if (provider === 'anthropic') {
             modelSelect.innerHTML = `
-                <option value="claude-3-haiku-20240307">Claude 3 Haiku</option>
-                <option value="claude-3-sonnet-20240229">Claude 3 Sonnet</option>
-                <option value="claude-3-opus-20240229">Claude 3 Opus</option>
+                <option value="claude-sonnet-4-20250514">Claude 4 Sonnet</option>
+                <option value="claude-opus-4-20250514">Claude 4 Opus</option>
             `;
         }
     }

@@ -122,7 +122,7 @@ class LLMService:
         if self.provider == "openai":
             return await self._call_openai(evidence_json, model or "gpt-4o-mini")
         elif self.provider == "anthropic":
-            return await self._call_anthropic(evidence_json, model or "claude-3-haiku-20240307")
+            return await self._call_anthropic(evidence_json, model or "claude-sonnet-4-20250514")
         else:
             raise ValueError(f"Unsupported provider: {self.provider}")
     
