@@ -2,6 +2,8 @@
 
 A web application that analyzes potential correlations between genes and diseases using public life sciences data and LLM capabilities. Built as a demonstration project showcasing modern Python development practices and AI integration.
 
+NB: Working online version: https://gene-disease-analysis-service-production.up.railway.app/
+
 ## 🚀 Quick Start
 
 ```bash
